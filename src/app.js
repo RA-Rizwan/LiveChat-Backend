@@ -42,17 +42,14 @@ const io = new Server(server, {
 
 
 
-// server-socket.js (or wherever you set up io.on('connection'))
 import { User } from "./models/user.js";
 
-// in-memory maps (single instance). For multi-server, use Redis adapter.
-const socketsByUser = new Map(); // userId -> Set(socketId)
+const socketsByUser = new Map(); 
 const roomFor = (a, b) => [String(a), String(b)].sort().join("_");
 
 io.on("connection", (socket) => {
   console.log("socket connected:", socket.id);
 
-  // 1) REGISTER (presence + personal room + upgrade pending deliveries)
   socket.on("register", async ({ userId }) => {
     userId = String(userId);
     socket.data.userId = userId;
@@ -60,22 +57,19 @@ io.on("connection", (socket) => {
     if (!socketsByUser.has(userId)) socketsByUser.set(userId, new Set());
     socketsByUser.get(userId).add(socket.id);
 
-    // personal room to target the user across tabs
     socket.join(`user:${userId}`);
 
-    // set online
+    
     try {
       await User.findByIdAndUpdate(userId, { isOnline: true }, { new: false });
     } catch { }
 
-    // broadcast presence
     io.to(`presence:${userId}`).emit("presence", {
       userId,
       isOnline: true,
       lastSeen: null,
     });
 
-    // Upgrade any "sent" -> "delivered" messages addressed TO this user
     try {
       const chats = await Chat.find({
         participants: { $all: [userId] },
@@ -83,7 +77,7 @@ io.on("connection", (socket) => {
         "messages.senderId": { $ne: userId },
       }).select("messages participants");
 
-      const deliverMap = new Map(); // senderId -> string[] messageIds
+      const deliverMap = new Map(); 
 
       for (const chat of chats) {
         let changed = false;
@@ -99,7 +93,6 @@ io.on("connection", (socket) => {
         if (changed) await chat.save();
       }
 
-      // notify senders (both their personal room and two-party chat room)
       for (const [senderId, ids] of deliverMap.entries()) {
         io.to(`user:${senderId}`).emit("messagesDelivered", {
           messageIds: ids,
@@ -115,7 +108,6 @@ io.on("connection", (socket) => {
     }
   });
 
-  // 2) Presence watchers
   socket.on("watchPresence", async ({ userIds }) => {
     if (!Array.isArray(userIds)) return;
 
@@ -144,7 +136,6 @@ io.on("connection", (socket) => {
     }
   });
 
-  // 3) Rooms for a pair chat
   socket.on("joinChat", ({ userId, targetUserId }) => {
     socket.join(roomFor(userId, targetUserId));
   });
@@ -152,8 +143,7 @@ io.on("connection", (socket) => {
     socket.leave(roomFor(userId, targetUserId));
   });
 
-  // 4) SEND message: persist + increment unread for recipient + summary + notify
-  // inside io.on("connection")
+  
   socket.on(
     "sendMessage",
     async ({ tempId, firstName, lastName, userId, targetUserId, text }) => {
@@ -161,6 +151,7 @@ io.on("connection", (socket) => {
       targetUserId = String(targetUserId);
 
       const chatRoom = roomFor(userId, targetUserId);
+      const userRoom = `user:${targetUserId}`;
       const recipientHasRoom = !!io.sockets.adapter.rooms.get(`user:${targetUserId}`)?.size;
 
       let chat = await Chat.findOne({ participants: { $all: [userId, targetUserId] } });
@@ -189,24 +180,19 @@ io.on("connection", (socket) => {
         status: saved.status,
       };
 
-      // ✅ deliver to recipient’s personal room (if they registered)
-      io.to(`user:${targetUserId}`).emit("messageReceived", payload);
+      io.to(userRoom).except(chatRoom).emit("messageReceived", payload);
 
-
-      // ✅ also deliver to the two-party chat room (covers both tabs that joined this chat)
       io.to(chatRoom).emit("messageReceived", payload);
       
 
-      // ack back to sender
       socket.emit("messageAck", payload);
     }
   );
 
 
-  // 5) MARK SEEN: flip to 'seen' + reset viewer's unread counter
   socket.on("markSeen", async ({ userId, targetUserId }) => {
-    userId = String(userId);           // viewer (recipient)
-    targetUserId = String(targetUserId); // original sender
+    userId = String(userId);           
+    targetUserId = String(targetUserId); 
 
     const chat = await Chat.findOne({
       participants: { $all: [userId, targetUserId] },
@@ -224,7 +210,6 @@ io.on("connection", (socket) => {
       }
     }
 
-    // 🔹 reset viewer's unread + update lastReadAt
     const setUnread = chat.unreadCounts?.set?.bind(chat.unreadCounts);
     if (setUnread) setUnread(userId, 0);
     else chat.unreadCounts[userId] = 0;
@@ -239,7 +224,6 @@ io.on("connection", (socket) => {
     await chat.save();
 
     if (changedIds.length) {
-      // notify original sender (their sockets)
       io.to(`user:${targetUserId}`).emit("messagesSeen", {
         messageIds: changedIds,
         byUserId: userId,
@@ -247,12 +231,10 @@ io.on("connection", (socket) => {
       });
     }
 
-    // let both sides clear/refresh badges immediately
     io.to(`user:${userId}`).emit("unreadReset", { withUserId: targetUserId });
     io.to(`user:${targetUserId}`).emit("unreadReset", { withUserId: userId });
   });
 
-  // 6) DISCONNECT: presence cleanup
   socket.on("disconnect", async () => {
     const userId = socket.data.userId;
     if (userId) {
