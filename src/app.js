@@ -7,9 +7,10 @@ import { connectdb } from "./config/database.js";
 import { userRouter } from "./routes/user..js";
 import cors from "cors"
 
-import http from "http"
 
 import { Server } from "socket.io";
+import http from "http"
+
 import { Chat } from "./models/chat.js";
 import { chatRouter } from "./routes/chat.js";
 

@@ -3,7 +3,9 @@ import { signupValidate, loginValidate } from "../utils/validator.js";
 import bcrypt from "bcrypt";
 import { User } from "../models/user.js";
 import { authuser } from "../middlewear/auth.js";
+import { createRequire } from 'module';
 
+const require = createRequire(import.meta.url);
 
 export const authRouter = express.Router();
 
